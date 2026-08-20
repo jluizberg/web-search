@@ -1,0 +1,35 @@
+{
+  "postgres": {
+    "host": "postgres.intra.jbdesign.com.br",
+    "port": 5432,
+    "user": "websearch",
+    "password": "0ab3c56d229f1040b30a",
+    "database": "websearch"
+  },
+  "qdrant": {
+    "url": "http://qdrant.intra.jbdesign.com.br",
+    "apiKey": "Db2xPanVycho6DOAp2ib"
+  },
+  "discovery": {
+    "provider": "homepage",
+    "tavilyApiKey": "",
+    "googleApiKey": "",
+    "googleCx": ""
+  },
+  "translation": {
+    "enabled": true,
+    "endpoint": "https://translator.intra.jbdesign.com.br/translate",
+    "targetLanguage": "en",
+    "apiKey": ""
+  },
+  "scheduler": {
+  },
+  "scraper": {
+    "manualMode": true,
+    "usePuppeteerSites": []
+  },
+  "web": {
+    "apiPort": 4000,
+    "scraperPort": 3001
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "article-extractor",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test:discovery": "node -e \"require('./discovery').discoverUrls(require('../../lib/config').loadConfig())\"",
+    "test:scraper": "node -e \"require('./scraper').scrapeArticle('https://example.com').then(console.log).catch(console.error)\""
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "franc-min": "^6.2.0",
+    "pg": "^8.11.0",
+    "puppeteer": "^25.8.0"
+  },
+  "allowScripts": {
+    "puppeteer@21.11.0": true
+  }
+}

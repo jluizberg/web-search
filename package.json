@@ -1,0 +1,9 @@
+{
+  "name": "web-search",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@qdrant/js-client-rest": "^1.15.0",
+    "pg": "^8.11.0"
+  }
+}
