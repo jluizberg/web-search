@@ -10,6 +10,44 @@ async function getGlobalKeywords(config) {
   return result.rows.map(row => row.keyword).filter(Boolean);
 }
 
+async function getGlobalAuthors(config) {
+  const result = await query(config, 'SELECT id, author, variations FROM search_authors ORDER BY id');
+  return result.rows;
+}
+
+async function enrichAuthorProfiles(config, authors) {
+  for (const author of authors) {
+    try {
+      const searchResponse = await axios.get('https://en.wikipedia.org/w/api.php', {
+        params: { action: 'query', list: 'search', srsearch: author.author, srlimit: 1, format: 'json' },
+        headers: { 'User-Agent': 'ArticleExtractor/1.0' },
+        timeout: 15000
+      });
+      const title = searchResponse.data.query?.search?.[0]?.title;
+      const normalizeName = value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      if (!title || normalizeName(title) !== normalizeName(author.author)) continue;
+      const response = await axios.get(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
+        { headers: { 'User-Agent': 'ArticleExtractor/1.0' }, timeout: 15000 }
+      );
+      const summary = response.data.extract;
+      const profileUrl = response.data.content_urls?.desktop?.page;
+      if (!summary && !profileUrl) continue;
+      await query(
+        config,
+        `UPDATE search_authors
+         SET biography = COALESCE(NULLIF(biography, ''), $2),
+             profile_url = COALESCE(NULLIF(profile_url, ''), $3),
+             metadata = metadata || $4::jsonb
+         WHERE id = $1`,
+        [author.id, summary || null, profileUrl || null, JSON.stringify({ wikipedia: response.data })]
+      );
+    } catch (err) {
+      console.warn(`Unable to enrich author ${author.author}:`, err.message);
+    }
+  }
+}
+
 async function getInspectedUrls(config, site) {
   const result = await query(config, 'SELECT url FROM inspected_pages WHERE site = $1', [site]);
   return new Set(result.rows.map(row => row.url));
@@ -96,6 +134,81 @@ async function searchDuckDuckGo(target) {
   }
 
   return [...new Set(urls)];
+}
+
+async function searchAuthors(authors, keywords) {
+  const cheerio = require('cheerio');
+  const urls = [];
+  const searchTerms = keywords.length > 0 ? keywords : [''];
+
+  for (const author of authors) {
+    for (const keyword of searchTerms) {
+      const queryText = [`"${author}"`, keyword].filter(Boolean).join(' ');
+      const response = await axios.get('https://html.duckduckgo.com/html/', {
+        params: { q: queryText },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ArticleExtractor/1.0)' },
+        timeout: 30000
+      });
+      const $ = cheerio.load(response.data);
+      $('.result__a').each((index, element) => {
+        const href = $(element).attr('href');
+        if (!href) return;
+        try {
+          const parsed = new URL(href, 'https://html.duckduckgo.com');
+          const targetUrl = parsed.searchParams.get('uddg') || parsed.href;
+          if (targetUrl.startsWith('http')) urls.push(targetUrl);
+        } catch (err) {
+          return;
+        }
+      });
+      await delay(2000);
+    }
+  }
+
+  return [...new Set(urls)];
+}
+
+async function searchAuthorsGdelt(authors, keywords) {
+  const urls = [];
+  const queries = keywords.length > 0 ? keywords : [''];
+  for (const author of authors) {
+    for (const keyword of queries) {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          const response = await axios.get('https://api.gdeltproject.org/api/v2/doc/doc', {
+            params: {
+              query: [`"${author}"`, keyword].filter(Boolean).join(' '),
+              mode: 'artlist',
+              format: 'json',
+              maxrecords: 50,
+              sort: 'datedesc',
+              timespan: '5years'
+            },
+            timeout: 30000
+          });
+          urls.push(...(response.data.articles || []).map(article => article.url).filter(Boolean));
+          break;
+        } catch (err) {
+          if (err.response?.status === 429 && attempt === 1) {
+            console.warn(`GDELT rate limit for ${author}; retrying in 15 seconds...`);
+            await delay(15000);
+            continue;
+          }
+          console.warn(`Unable to search GDELT for ${author}:`, err.message);
+          break;
+        }
+      }
+    }
+  }
+  return [...new Set(urls)];
+}
+
+function getSiteFromUrl(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '');
+  } catch (err) {
+    return null;
+  }
 }
 
 async function getSitemapUrls(site) {
@@ -197,16 +310,42 @@ async function discoverUrls(config) {
     throw new Error('Google provider selected but GOOGLE_API_KEY or GOOGLE_CX is empty.');
   }
 
-  const [targetResult, keywords] = await Promise.all([
+  const [targetResult, keywords, authors] = await Promise.all([
     query(config, 'SELECT id, site FROM search_targets ORDER BY site'),
-    getGlobalKeywords(config)
+    getGlobalKeywords(config),
+    getGlobalAuthors(config)
   ]);
   const targets = targetResult.rows.map(target => ({ ...target, keywords }));
+  await enrichAuthorProfiles(config, authors);
+  const authorNames = authors.flatMap(author => [author.author, ...(author.variations || [])]).filter(Boolean);
   console.log(`Found ${targets.length} search target(s)`);
   if (targets.length === 0) {
     console.warn('No search targets configured. Add sites to search_targets first.');
-    return;
   }
+
+  if (authorNames.length > 0) {
+    try {
+      let authorUrls = await searchAuthors(authorNames, keywords);
+      if (authorUrls.length === 0) {
+        console.warn('DuckDuckGo returned no author results; trying GDELT.');
+        authorUrls = await searchAuthorsGdelt(authorNames, keywords);
+      }
+      for (const url of authorUrls) {
+        const site = getSiteFromUrl(url);
+        if (!site) continue;
+        await query(
+          config,
+          `INSERT INTO articles (id, url, site) VALUES (gen_random_uuid(), $1, $2) ON CONFLICT (url) DO NOTHING`,
+          [url, site]
+        );
+      }
+      console.log(`Discovered ${authorUrls.length} URLs from ${authorNames.length} author name variation(s)`);
+    } catch (err) {
+      console.error(`Author discovery error: ${err.message}`);
+    }
+  }
+
+  if (targets.length === 0) return;
 
   for (const target of targets) {
     try {

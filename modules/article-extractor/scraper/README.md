@@ -8,7 +8,7 @@ Fetches article pages and extracts title, content, author, and publish date.
 const { scrapeArticle } = require('./scraper');
 
 const article = await scrapeArticle('https://example.com/article');
-// => { url, site, title, content, raw_html, author, topic, published_at }
+// => { url, site, title, content, author, topic, published_at }
 ```
 
 ## Strategy
@@ -32,7 +32,7 @@ Returns an object:
 - `site` — hostname without `www.`
 - `title` — string
 - `content` — plain text, max 50000 chars
-- `raw_html` — full HTML
+- `content` — extracted article text; articles with 50 words or fewer are rejected
 - `author` — string or null
 - `topic` — classified topic string
 - `published_at` — Date or null

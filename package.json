@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@qdrant/js-client-rest": "^1.15.0",
+    "express": "^5.2.1",
+    "jsonrepair": "^3.15.0",
     "pg": "^8.11.0"
   }
 }

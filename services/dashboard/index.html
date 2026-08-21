@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Field Notes | Research Desk</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand"><span class="brand-mark">FN</span><div><p class="kicker">Web Search / Research Desk</p><h1>Field Notes</h1></div></div>
+    <button class="print-button" id="printButton" type="button" title="Export the answer as a PDF">Print / PDF</button>
+  </header>
+  <main class="layout">
+    <aside class="sidebar">
+      <p class="eyebrow">Ask the archive</p>
+      <p class="sidebar-copy">Search the indexed articles, then let the model separate evidence from the questions worth carrying forward.</p>
+      <form id="askForm">
+        <label for="question">Your question</label>
+        <textarea id="question" rows="8" required placeholder="What patterns are emerging across the reporting?"></textarea>
+        <label for="topic">Focus collection</label>
+        <select id="topic"><option value="">All indexed topics</option></select>
+        <label for="limit">Sources</label>
+        <select id="limit"><option value="6">6 sources</option><option value="8" selected>8 sources</option><option value="12">12 sources</option></select>
+        <button class="submit-button" type="submit"><span>Ask the archive</span><span aria-hidden="true">↗</span></button>
+      </form>
+      <p class="status" id="status" role="status">Ready for a question.</p>
+    </aside>
+    <section class="report" id="report" aria-live="polite">
+      <div class="empty-state" id="emptyState"><span class="empty-index">00</span><h2>A considered answer,<br>grounded in your archive.</h2><p>Ask a question to begin. The report will keep the source trail visible.</p></div>
+      <article class="answer-page hidden" id="answerPage">
+        <div class="report-meta"><span>Research brief</span><time id="reportDate"></time></div>
+        <h2 id="reportQuestion"></h2>
+        <div class="rule"></div>
+        <section class="answer-section"><p class="section-label">Synthesis</p><div class="answer-copy" id="answerCopy"></div></section>
+        <section class="answer-section considerations"><p class="section-label">Additional considerations</p><ul id="considerations"></ul></section>
+        <section class="references"><p class="section-label">References</p><ol id="references"></ol></section>
+      </article>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

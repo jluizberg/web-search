@@ -13,9 +13,14 @@ await discoverUrls(config);
 
 ## How it works
 
-1. Reads global keywords from `search_keywords` and sites from `search_targets`
+1. Reads global keywords from `search_keywords`, authors from `search_authors`, and sites from `search_targets`
 2. For each target, calls the configured homepage crawler, sitemap crawler, DuckDuckGo, GDELT, Tavily, or Google Custom Search
 3. Inserts every discovered URL into `articles` with `topic` unset and `embedding_status='pending'`
+
+Author searches are broad and site-independent. Each canonical author name and
+each value in `search_authors.variations` is searched separately with every
+global keyword. Matching result URLs are queued using their hostname as the
+article site. DuckDuckGo is tried first, with GDELT as a fallback.
 4. Skips URLs already present (unique constraint on `articles.url`)
 
 ## Configuration

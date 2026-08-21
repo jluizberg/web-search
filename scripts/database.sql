@@ -6,6 +6,21 @@ CREATE TABLE IF NOT EXISTS search_keywords (
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS search_authors (
+  id BIGSERIAL PRIMARY KEY,
+  author TEXT NOT NULL UNIQUE,
+  variations TEXT[] NOT NULL DEFAULT '{}',
+  biography TEXT,
+  profile_url TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE search_authors ADD COLUMN IF NOT EXISTS variations TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE search_authors ADD COLUMN IF NOT EXISTS biography TEXT;
+ALTER TABLE search_authors ADD COLUMN IF NOT EXISTS profile_url TEXT;
+ALTER TABLE search_authors ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE TABLE IF NOT EXISTS search_targets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   site TEXT NOT NULL,
@@ -61,6 +76,22 @@ ALTER TABLE articles ALTER COLUMN topic DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_articles_topic ON articles(topic);
 CREATE INDEX IF NOT EXISTS idx_articles_site ON articles(site);
 
+CREATE TABLE IF NOT EXISTS topic_reasonings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  topic TEXT NOT NULL UNIQUE,
+  reasoning TEXT NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS reasoning_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS matched_reasoning_ids UUID[] NOT NULL DEFAULT '{}';
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS reasoning_result JSONB;
+
+CREATE INDEX IF NOT EXISTS idx_articles_reasoning_status ON articles(reasoning_status);
+CREATE INDEX IF NOT EXISTS idx_topic_reasonings_active ON topic_reasonings(active);
+
 CREATE TABLE IF NOT EXISTS inspected_pages (
   url TEXT PRIMARY KEY,
   site TEXT NOT NULL,
@@ -76,6 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_inspected_pages_site ON inspected_pages(site);
 GRANT CONNECT ON DATABASE websearch TO websearch;
 GRANT USAGE ON SCHEMA public TO websearch;
 
-GRANT SELECT ON TABLE search_keywords, search_targets TO websearch;
+GRANT SELECT ON TABLE search_keywords, search_authors, search_targets TO websearch;
 GRANT SELECT, INSERT, UPDATE ON TABLE articles TO websearch;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE topic_reasonings TO websearch;
 GRANT SELECT, INSERT, UPDATE ON TABLE inspected_pages TO websearch;

@@ -15,7 +15,7 @@ Discovers, scrapes, classifies, and stores web articles into PostgreSQL and Qdra
 ## Data Flow
 
 ```
-search_keywords and search_targets (Postgres)
+search_keywords, search_authors, and search_targets (Postgres)
         |
         v
   discovery: find URLs
@@ -70,6 +70,7 @@ Reads from `config.json` at the project root. Key settings:
 - `translation.endpoint` — LibreTranslate `/translate` endpoint
 - `translation.targetLanguage` — target language, usually `en`
 - `search_keywords` — global discovery keywords shared by every site
+- `search_authors` — author names searched globally; each result is combined with the global keywords
 - `search_targets` — sites to scan; topics are assigned after scraping/classification
 
 ## Dependencies
@@ -99,6 +100,27 @@ CREATE TABLE search_targets (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE search_authors (
+      id BIGSERIAL PRIMARY KEY,
+      author TEXT NOT NULL UNIQUE,
+      variations TEXT[] NOT NULL DEFAULT '{}',
+      biography TEXT,
+      profile_url TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP DEFAULT NOW()
+);
+
+Example author configuration:
+
+```sql
+INSERT INTO search_authors (author, variations)
+VALUES ('Ben Norton', ARRAY['Benjamin Norton', 'Ben Norton'])
+ON CONFLICT (author) DO UPDATE SET variations = EXCLUDED.variations;
+```
+
+`biography`, `profile_url`, and `metadata` are enriched from an available
+Wikipedia page when discovery runs, while manually supplied values are kept.
+
 CREATE TABLE articles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   url TEXT UNIQUE NOT NULL,
@@ -106,7 +128,7 @@ CREATE TABLE articles (
   author TEXT,
   title TEXT,
   content TEXT,
-  raw_html TEXT,
+      -- Raw HTML is intentionally not stored.
       topic TEXT,
   published_at TIMESTAMP,
   ingested_at TIMESTAMP DEFAULT NOW(),

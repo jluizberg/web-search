@@ -2,23 +2,25 @@ const { query } = require('../../../lib/db');
 
 async function saveArticle(config, article) {
   const sql = `
-    INSERT INTO articles (id, url, site, author, title, content, original_title, original_content, language, raw_html, topic, published_at)
-    VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    INSERT INTO articles (id, url, site, author, title, content, original_title, original_content, language, topic, published_at)
+    VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT (url) DO UPDATE SET
       title = EXCLUDED.title,
       content = EXCLUDED.content,
       original_title = EXCLUDED.original_title,
       original_content = EXCLUDED.original_content,
       language = EXCLUDED.language,
-      raw_html = EXCLUDED.raw_html,
       topic = EXCLUDED.topic,
-      published_at = EXCLUDED.published_at
+      published_at = EXCLUDED.published_at,
+      reasoning_status = 'pending',
+      matched_reasoning_ids = '{}',
+      reasoning_result = NULL
     RETURNING id
   `;
   const values = [
     article.url, article.site, article.author, article.title,
     article.content, article.original_title, article.original_content,
-    article.language, article.raw_html, article.topic, article.published_at
+    article.language, article.topic, article.published_at
   ];
   const result = await query(config, sql, values);
   return result.rows[0].id;

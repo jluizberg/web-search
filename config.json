@@ -7,7 +7,7 @@
     "database": "websearch"
   },
   "qdrant": {
-    "url": "http://qdrant.intra.jbdesign.com.br",
+    "url": "https://qdrant.intra.jbdesign.com.br:443",
     "apiKey": "Db2xPanVycho6DOAp2ib"
   },
   "discovery": {
@@ -27,6 +27,12 @@
   "scraper": {
     "manualMode": true,
     "usePuppeteerSites": []
+  },
+  "reasoning": {
+    "enabled": true,
+    "endpoint": "https://api.deepseek.com/chat/completions",
+    "model": "deepseek-chat",
+    "apiKey": "sk-4bfc4a0a9c2b40dbbc27562e81eda84a"
   },
   "web": {
     "apiPort": 4000,
