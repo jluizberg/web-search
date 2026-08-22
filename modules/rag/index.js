@@ -3,7 +3,7 @@ const { processPendingArticles } = require('./processor');
 
 async function run() {
   const result = await processPendingArticles(loadConfig());
-  console.log(`Reasoning completed: ${result.processed} articles processed, ${result.matched} topic matches`);
+  console.log(`Processing completed: ${result.processed} articles processed, ${result.matched} topic matches, ${result.stakeholders} stakeholder mentions, ${result.authors} authorships, ${result.relationships} relationships`);
 }
 
 module.exports = { run };

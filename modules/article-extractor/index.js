@@ -6,12 +6,14 @@ const { loadConfig } = require('../../lib/config');
 async function run() {
   const config = loadConfig();
 
-  console.log('Starting article extractor pipeline...');
+  console.log('\n========== ARTICLE EXTRACTOR PIPELINE ==========');
 
   // Step 1: Discovery - find new URLs from search targets
+  console.log('\n--- PHASE 1: DISCOVERY ---');
   await discoverUrls(config);
 
   // Step 2: Scrape pending URLs
+  console.log('\n--- PHASE 2: SCRAPING ---');
   const pending = await getPendingUrls(config);
   console.log(`Found ${pending.length} pending articles to scrape`);
 
@@ -19,7 +21,6 @@ async function run() {
     try {
       console.log(`Scraping ${row.url}`);
       const article = await scrapeArticle(row.url);
-      article.topic = row.topic || article.topic;
       const id = await saveArticle(config, article);
       await markEmbeddingStatus(config, id, 'pending');
       console.log(`Saved article: ${article.title}`);
@@ -28,7 +29,7 @@ async function run() {
     }
   }
 
-  console.log('Article extractor pipeline completed');
+  console.log('\n========== ARTICLE EXTRACTOR PIPELINE COMPLETED ==========');
 }
 
 module.exports = { run };

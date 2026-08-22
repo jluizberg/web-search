@@ -14,6 +14,13 @@ The RAG question endpoint is implemented and serves the dashboard UI.
 - `GET /articles`, `GET /articles/:id`
 - `GET /api/rag/topics` — list active topic filters
 - `POST /api/rag/ask` — retrieve Qdrant sources and generate a grounded answer
+- `GET /api/stakeholder-definitions` — read the single extraction definition
+- `POST /api/stakeholder-definitions` — replace the single definition
+- `GET /api/stakeholders` — list the normalized stakeholder catalog
+- `GET /api/stakeholders/:id/articles` — list articles mentioning a stakeholder
+- `GET /api/relationship-definitions` — list relationship definitions
+- `POST /api/relationship-definitions` — create or update a relationship definition
+- `GET /api/stakeholder-relationships` — list extracted relationships with rationale
 
 ## Configuration
 

@@ -34,6 +34,14 @@
     "model": "deepseek-chat",
     "apiKey": "sk-4bfc4a0a9c2b40dbbc27562e81eda84a"
   },
+  "embedding": {
+    "model": "BAAI/bge-base-en-v1.5",
+    "vectorSize": 768
+  },
+  "stakeholder": {
+    "authorRelationshipId": "a60b7747-925d-41cc-9c67-3112ced5e5c5",
+    "collectionName": "stakeholders"
+  },
   "web": {
     "apiPort": 4000,
     "scraperPort": 3001

@@ -1,6 +1,7 @@
 const { query } = require('../../lib/db');
 const { EmbeddingModelError, indexArticle } = require('./embeddings');
 const { jsonrepair } = require('jsonrepair');
+const { processPendingStakeholders } = require('../relationship-extractor');
 
 class DeepSeekAccessError extends Error {
   constructor(status, message) {
@@ -83,12 +84,16 @@ async function getActiveReasonings(config) {
 
 async function getPendingArticles(config) {
   const result = await query(config, `
-    SELECT id, url, site, title, content
-    FROM articles
-    WHERE reasoning_status IN ('pending', 'error')
-      AND title IS NOT NULL AND title <> ''
-      AND content IS NOT NULL AND content <> ''
-    ORDER BY ingested_at
+    SELECT DISTINCT a.id, a.url, a.site, a.title, a.content, a.ingested_at
+    FROM articles a
+    LEFT JOIN article_reasoning ar ON ar.article_id = a.id
+    WHERE a.title IS NOT NULL AND a.title <> ''
+      AND a.content IS NOT NULL AND a.content <> ''
+      AND (
+        ar.article_id IS NULL
+        OR ar.reasoning_status IN ('pending', 'error')
+      )
+    ORDER BY a.ingested_at
   `);
   return result.rows;
 }
@@ -103,13 +108,35 @@ async function saveAnalysis(config, article, analysis, reasonings) {
       topic: reasoningsById.get(String(item.reasoning_id)).topic
     }));
   const reasoningIds = matches.map(item => item.reasoning_id);
-  await query(config, `
-    UPDATE articles
-    SET reasoning_status = 'analyzed',
-        matched_reasoning_ids = $1,
-        reasoning_result = $2
-    WHERE id = $3
-  `, [reasoningIds, analysis, article.id]);
+
+  const analyzedReasoningIds = new Set((analysis.matches || [])
+    .filter(item => reasoningsById.has(String(item.reasoning_id)))
+    .map(item => String(item.reasoning_id)));
+
+  for (const reasoning of reasonings) {
+    const reasoningId = String(reasoning.id);
+    if (analyzedReasoningIds.has(reasoningId)) {
+      const match = (analysis.matches || []).find(item => String(item.reasoning_id) === reasoningId);
+      await query(config, `
+        INSERT INTO article_reasoning (article_id, reasoning_id, reasoning_status, reasoning_result)
+        VALUES ($1, $2, 'analyzed', $3)
+        ON CONFLICT (article_id, reasoning_id) DO UPDATE
+        SET reasoning_status = 'analyzed',
+            reasoning_result = EXCLUDED.reasoning_result,
+            updated_at = NOW()
+      `, [article.id, reasoning.id, { topic: reasoning.topic, matches: match.matches === true, explanation: match.explanation || null }]);
+    } else {
+      await query(config, `
+        INSERT INTO article_reasoning (article_id, reasoning_id, reasoning_status, reasoning_result)
+        VALUES ($1, $2, 'analyzed', $3)
+        ON CONFLICT (article_id, reasoning_id) DO UPDATE
+        SET reasoning_status = 'analyzed',
+            reasoning_result = EXCLUDED.reasoning_result,
+            updated_at = NOW()
+      `, [article.id, reasoning.id, { topic: reasoning.topic, matches: false, explanation: null }]);
+    }
+  }
+
   return matches;
 }
 
@@ -118,24 +145,30 @@ async function markEmbeddingStatus(config, articleId, status) {
 }
 
 async function processPendingArticles(config) {
-  if (!config.REASONING_ENABLED) return { processed: 0, matched: 0 };
+  const stakeholderResult = await processPendingStakeholders(config);
+  if (!config.REASONING_ENABLED) return { processed: stakeholderResult.processed, matched: 0, stakeholders: stakeholderResult.extracted, relationships: stakeholderResult.relationships, authors: stakeholderResult.authors };
   if (!config.DEEPSEEK_API_KEY) throw new Error('DEEPSEEK_API_KEY is required when reasoning is enabled');
 
   const reasonings = await getActiveReasonings(config);
-  if (!reasonings.length) return { processed: 0, matched: 0 };
+  if (!reasonings.length) return { processed: stakeholderResult.processed, matched: 0, stakeholders: stakeholderResult.extracted, relationships: stakeholderResult.relationships, authors: stakeholderResult.authors };
 
   const articles = await getPendingArticles(config);
   let matched = 0;
   for (const article of articles) {
     try {
+      console.log(`[reasoning] Analyzing ${article.url}`);
       const analysis = await analyzeArticle(config, article, reasonings);
       const matches = await saveAnalysis(config, article, analysis, reasonings);
       if (!matches.length) {
         await markEmbeddingStatus(config, article.id, 'skipped');
+        console.log(`[reasoning] ${article.url} -> no topic matched, embedding skipped`);
         continue;
       }
+      const indexedTopics = matches.map(m => m.topic).join(', ');
+      console.log(`[reasoning] ${article.url} -> matched [${indexedTopics}], indexing in Qdrant...`);
       matched += await indexArticle(config, article, matches);
       await markEmbeddingStatus(config, article.id, 'done');
+      console.log(`[reasoning] ${article.url} -> indexed ${matches.length} topic collection(s), embedding_status=done`);
     } catch (error) {
       if (error instanceof DeepSeekAccessError) {
         console.error(error.message);
@@ -145,11 +178,13 @@ async function processPendingArticles(config) {
         console.error(error.message);
         throw error;
       }
-      await query(config, `UPDATE articles SET reasoning_status = 'error', embedding_status = 'failed', reasoning_result = $1 WHERE id = $2`, [{ error: error.message }, article.id]);
+      await query(config, `UPDATE article_reasoning SET reasoning_status = 'error', reasoning_result = $1, updated_at = NOW() WHERE article_id = $2 AND reasoning_status IN ('pending', 'error')`, [{ error: error.message }, article.id]);
+      await query(config, `UPDATE articles SET embedding_status = 'failed' WHERE id = $1`, [article.id]);
       console.error(`Reasoning failed for ${article.url}:`, error.message);
     }
   }
-  return { processed: articles.length, matched };
+  console.log(`[reasoning] pipeline complete: ${articles.length} article(s), ${matched} topic match(es) embedded`);
+  return { processed: articles.length, matched, stakeholders: stakeholderResult.extracted, relationships: stakeholderResult.relationships, authors: stakeholderResult.authors };
 }
 
 module.exports = { analyzeArticle, processPendingArticles };

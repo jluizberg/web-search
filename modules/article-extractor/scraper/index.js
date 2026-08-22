@@ -47,7 +47,7 @@ async function translateText(cfg, text, sourceLanguage) {
 async function translateArticle(cfg, article) {
   const language = detectLanguage(article.content);
   if (!cfg.TRANSLATION_ENABLED || language === 'eng' || language === 'und') {
-    return { ...article, language, original_title: article.title, original_content: article.content };
+    return { ...article, language };
   }
 
   try {
@@ -60,13 +60,11 @@ async function translateArticle(cfg, article) {
       ...article,
       title,
       content,
-      language,
-      original_title: article.title,
-      original_content: article.content
+      language
     };
   } catch (err) {
     console.warn(`Translation failed for ${article.url}; keeping original text:`, err.message);
-    return { ...article, language, original_title: article.title, original_content: article.content };
+    return { ...article, language };
   }
 }
 
@@ -78,36 +76,16 @@ async function scrapeWithAxios(url) {
   const html = response.data;
   const $ = cheerio.load(html);
 
-  const jsonLdAuthors = [];
-  $('script[type="application/ld+json"]').each((index, element) => {
-    try {
-      const data = JSON.parse($(element).contents().text());
-      const entries = Array.isArray(data) ? data : [data];
-      for (const entry of entries) {
-        const authors = Array.isArray(entry.author) ? entry.author : [entry.author];
-        for (const author of authors) {
-          const name = typeof author === 'string' ? author : author?.name;
-          if (name) jsonLdAuthors.push(name.trim());
-        }
-      }
-    } catch (err) {
-      // Ignore malformed JSON-LD and continue with HTML metadata.
-    }
-  });
-
   $('script, style, nav, header, footer, aside, iframe, noscript').remove();
 
   const title = $('h1').first().text().trim() || $('title').text().trim();
   const content = $('article, main, .post-content, .entry-content, .content').first().text().trim()
     || $('body').text().trim().slice(0, 50000);
 
-  const author = jsonLdAuthors[0]
-    || $('meta[name="author"], meta[property="article:author"]').first().attr('content')
-    || $('[rel="author"], .author, .byline, [itemprop="author"]').first().text().trim();
   const publishedAt = $('meta[property="article:published_time"], meta[name="published"], time[datetime]').first().attr('content')
     || $('time').first().attr('datetime');
 
-  return { title, content, author, published_at: publishedAt };
+  return { title, content, published_at: publishedAt };
 }
 
 async function scrapeWithPuppeteer(url) {
@@ -119,33 +97,13 @@ async function scrapeWithPuppeteer(url) {
     await page.waitForTimeout(2000);
 
     const data = await page.evaluate(() => {
-      const jsonLdAuthors = [];
-      document.querySelectorAll('script[type="application/ld+json"]').forEach(element => {
-        try {
-          const parsed = JSON.parse(element.textContent);
-          const entries = Array.isArray(parsed) ? parsed : [parsed];
-          entries.forEach(entry => {
-            const authors = Array.isArray(entry.author) ? entry.author : [entry.author];
-            authors.forEach(author => {
-              const name = typeof author === 'string' ? author : author?.name;
-              if (name) jsonLdAuthors.push(name.trim());
-            });
-          });
-        } catch (err) {
-          // Ignore malformed JSON-LD and continue with HTML metadata.
-        }
-      });
       document.querySelectorAll('script, style, nav, header, footer, aside, iframe, noscript').forEach(el => el.remove());
       const title = document.querySelector('h1')?.textContent?.trim() || document.title;
       const content = document.querySelector('article, main, .post-content, .entry-content, .content')?.textContent?.trim()
         || document.body.textContent.trim().slice(0, 50000);
-      const author = jsonLdAuthors[0]
-        || document.querySelector('meta[name="author"], meta[property="article:author"]')?.getAttribute('content')
-        || document.querySelector('[rel="author"], .author, .byline, [itemprop="author"]')?.textContent?.trim()
-        || '';
       const publishedAt = document.querySelector('meta[property="article:published_time"], meta[name="published"], time[datetime]')?.getAttribute('content')
         || document.querySelector('time')?.getAttribute('datetime') || '';
-      return { title, content, author, publishedAt };
+      return { title, content, publishedAt };
     });
 
     return data;
@@ -183,10 +141,7 @@ async function scrapeArticle(url) {
     site,
     title: translated.title,
     content: translated.content,
-    original_title: translated.original_title,
-    original_content: translated.original_content,
     language: translated.language,
-    author: translated.author || null,
     topic,
     published_at: (result.publishedAt || result.published_at) ? new Date(result.publishedAt || result.published_at) : null,
   };
@@ -196,20 +151,22 @@ async function scrapePending() {
   const cfg = getConfig();
   const pending = await getPendingUrls(cfg);
   const results = [];
+  console.log(`\n[scraper] Starting scraping job: ${pending.length} pending article(s) to process`);
 
-  for (const row of pending) {
+  for (let index = 0; index < pending.length; index += 1) {
+    const row = pending[index];
+    console.log(`[scraper] [${index + 1}/${pending.length}] Fetching ${row.url}`);
     try {
-      console.log(`Scraping ${row.url}`);
       const article = await scrapeArticle(row.url);
-      article.topic = row.topic || article.topic;
       const id = await saveArticle(cfg, article);
       results.push({ url: row.url, id, title: article.title });
-      console.log(`Saved article: ${article.title}`);
+      console.log(`[scraper] [${index + 1}/${pending.length}] Saved "${article.title}" (lang: ${article.language}, site: ${article.site})`);
     } catch (err) {
-      console.error(`Scraping error for ${row.url}:`, err.message);
+      console.error(`[scraper] [${index + 1}/${pending.length}] Failed ${row.url}: ${err.message}`);
     }
   }
 
+  console.log(`\n[scraper] Job complete: ${results.length}/${pending.length} article(s) scraped successfully`);
   return results;
 }
 

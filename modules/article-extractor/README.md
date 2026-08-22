@@ -15,7 +15,7 @@ Discovers, scrapes, classifies, and stores web articles into PostgreSQL and Qdra
 ## Data Flow
 
 ```
-search_keywords, search_authors, and search_targets (Postgres)
+topic_reasonings (search terms), search_authors, and search_targets (Postgres)
         |
         v
   discovery: find URLs
@@ -69,8 +69,8 @@ Reads from `config.json` at the project root. Key settings:
 - `translation.enabled` — detect and translate non-English articles
 - `translation.endpoint` — LibreTranslate `/translate` endpoint
 - `translation.targetLanguage` — target language, usually `en`
-- `search_keywords` — global discovery keywords shared by every site
-- `search_authors` — author names searched globally; each result is combined with the global keywords
+- `topic_reasonings.search_names` / `topic_reasonings.search_keywords` — global discovery search terms shared by every site (JSON arrays of strings; names matched exactly, keywords partial)
+- `search_authors` — author names searched globally; each result is combined with the global search terms
 - `search_targets` — sites to scan; topics are assigned after scraping/classification
 
 ## Dependencies
@@ -87,12 +87,6 @@ Reads from `config.json` at the project root. Key settings:
 Requires these tables in PostgreSQL:
 
 ```sql
-CREATE TABLE search_keywords (
-      id BIGSERIAL PRIMARY KEY,
-      keyword TEXT NOT NULL UNIQUE,
-      created_at TIMESTAMP DEFAULT NOW()
-);
-
 CREATE TABLE search_targets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   site TEXT NOT NULL,
@@ -104,7 +98,6 @@ CREATE TABLE search_authors (
       id BIGSERIAL PRIMARY KEY,
       author TEXT NOT NULL UNIQUE,
       variations TEXT[] NOT NULL DEFAULT '{}',
-      biography TEXT,
       profile_url TEXT,
       metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMP DEFAULT NOW()
@@ -118,8 +111,12 @@ VALUES ('Ben Norton', ARRAY['Benjamin Norton', 'Ben Norton'])
 ON CONFLICT (author) DO UPDATE SET variations = EXCLUDED.variations;
 ```
 
-`biography`, `profile_url`, and `metadata` are enriched from an available
+`profile_url` and `metadata` are enriched from an available
 Wikipedia page when discovery runs, while manually supplied values are kept.
+
+When discovery runs, each author is also registered as a person-type
+stakeholder and enriched through the same pipeline used for article
+stakeholders (web search + DeepSeek consolidation + Qdrant profile index).
 
 CREATE TABLE articles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -168,10 +165,9 @@ Run LibreTranslate locally, for example with Docker:
 docker run --rm -p 5000:5000 libretranslate/libretranslate
 ```
 
-The scraper detects the source language with `franc-min`. When it is not
-English, it sends the title and content to LibreTranslate, stores the English
-translation in `title` and `content`, and preserves the source text in
-`original_title` and `original_content`.
+The scraper detects the source language with `franc-min` and stores it in
+`language`. When it is not English, it sends the title and content to
+LibreTranslate and stores the English translation in `title` and `content`.
 
 ## Testing
 

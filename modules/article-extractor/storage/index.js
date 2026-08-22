@@ -2,25 +2,20 @@ const { query } = require('../../../lib/db');
 
 async function saveArticle(config, article) {
   const sql = `
-    INSERT INTO articles (id, url, site, author, title, content, original_title, original_content, language, topic, published_at)
-    VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    INSERT INTO articles (id, url, site, title, content, language, published_at)
+    VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
     ON CONFLICT (url) DO UPDATE SET
       title = EXCLUDED.title,
       content = EXCLUDED.content,
-      original_title = EXCLUDED.original_title,
-      original_content = EXCLUDED.original_content,
       language = EXCLUDED.language,
-      topic = EXCLUDED.topic,
       published_at = EXCLUDED.published_at,
-      reasoning_status = 'pending',
-      matched_reasoning_ids = '{}',
-      reasoning_result = NULL
+      stakeholder_status = 'pending',
+      relationship_status = 'pending'
     RETURNING id
   `;
   const values = [
-    article.url, article.site, article.author, article.title,
-    article.content, article.original_title, article.original_content,
-    article.language, article.topic, article.published_at
+    article.url, article.site, article.title,
+    article.content, article.language, article.published_at
   ];
   const result = await query(config, sql, values);
   return result.rows[0].id;
@@ -33,7 +28,7 @@ async function markEmbeddingStatus(config, id, status) {
 async function getPendingUrls(config) {
   const result = await query(
     config,
-    "SELECT id, url, site, topic FROM articles WHERE title IS NULL OR content IS NULL OR title = ''"
+    "SELECT id, url, site FROM articles WHERE title IS NULL OR content IS NULL OR title = ''"
   );
   return result.rows;
 }

@@ -6,8 +6,10 @@ Retrieval-augmented Q&A over stored articles using vector search and an LLM.
 
 The first processing stage is implemented in `processor.js`. It reads active
 reasonings from `topic_reasonings`, sends the translated English article text
-to DeepSeek for classification, and stores the decision in
-`articles.reasoning_result`.
+to DeepSeek for classification, and stores the decision per article/topic in
+`article_reasoning` (`article_id`, `reasoning_id`, `reasoning_status`,
+`reasoning_result`). An article can be matched against multiple topics; each
+pair gets its own row so processing can be tracked per topic.
 
 Run it with:
 
@@ -18,6 +20,11 @@ node modules/rag/index.js
 Each matched topic gets its own Qdrant collection. The article is embedded
 once with local `BAAI/bge-m3` and upserted into every matched collection.
 Collection names are deterministic, so reprocessing updates the same points.
+
+Consolidated stakeholder profiles are stored as vectors in the Qdrant
+`stakeholders` collection, using the PostgreSQL stakeholder UUID as the point
+ID. PostgreSQL stores the identity and article relationships, not the profile
+metadata.
 
 The first BGE-M3 run downloads the model from Hugging Face and may take time.
 

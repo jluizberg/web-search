@@ -5,9 +5,45 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function getGlobalKeywords(config) {
-  const result = await query(config, 'SELECT keyword FROM search_keywords ORDER BY id');
-  return result.rows.map(row => row.keyword).filter(Boolean);
+function parseStringCollection(value) {
+  if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map(item => String(item).trim()).filter(Boolean);
+    } catch (err) {
+      return value.split(',').map(item => item.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+async function getTopicSearchTerms(config) {
+  const result = await query(config, `
+    SELECT topic, search_names, search_keywords
+    FROM topic_reasonings
+    WHERE active = TRUE
+    ORDER BY topic
+  `);
+  const names = [];
+  const keywords = [];
+  const seenNames = new Set();
+  const seenKeywords = new Set();
+  for (const row of result.rows) {
+    for (const name of parseStringCollection(row.search_names)) {
+      if (!seenNames.has(name)) {
+        seenNames.add(name);
+        names.push(name);
+      }
+    }
+    for (const keyword of parseStringCollection(row.search_keywords)) {
+      if (!seenKeywords.has(keyword)) {
+        seenKeywords.add(keyword);
+        keywords.push(keyword);
+      }
+    }
+  }
+  return { names, keywords };
 }
 
 async function getGlobalAuthors(config) {
@@ -16,34 +52,60 @@ async function getGlobalAuthors(config) {
 }
 
 async function enrichAuthorProfiles(config, authors) {
-  for (const author of authors) {
+  const { enrichAuthorStakeholder } = require('../../relationship-extractor');
+  for (let index = 0; index < authors.length; index += 1) {
+    const author = authors[index];
+    console.log(`[discovery] Enriching author ${index + 1}/${authors.length}: ${author.author}`);
+    try {
+      const wikipedia = await fetchWikipediaSummary(author.author);
+      if (wikipedia) {
+        await query(
+          config,
+          `UPDATE search_authors
+           SET profile_url = COALESCE(NULLIF(profile_url, ''), $2),
+               metadata = metadata || $3::jsonb
+           WHERE id = $1`,
+          [author.id, wikipedia.profileUrl || null, JSON.stringify({ wikipedia })]
+        );
+        console.log(`[discovery]   wikipedia summary found for ${author.author}`);
+      }
+      const stakeholderId = await enrichAuthorStakeholder(config, { ...author, biography: wikipedia?.summary });
+      if (stakeholderId) {
+        await query(config, `UPDATE search_authors SET metadata = metadata || $2::jsonb WHERE id = $1`, [author.id, JSON.stringify({ stakeholder_id: stakeholderId })]);
+      }
+    } catch (err) {
+      console.warn(`Unable to enrich author ${author.author}:`, err.message);
+    }
+    await delay(2000);
+  }
+}
+
+async function fetchWikipediaSummary(name) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const searchResponse = await axios.get('https://en.wikipedia.org/w/api.php', {
-        params: { action: 'query', list: 'search', srsearch: author.author, srlimit: 1, format: 'json' },
+        params: { action: 'query', list: 'search', srsearch: name, srlimit: 1, format: 'json' },
         headers: { 'User-Agent': 'ArticleExtractor/1.0' },
         timeout: 15000
       });
       const title = searchResponse.data.query?.search?.[0]?.title;
       const normalizeName = value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-      if (!title || normalizeName(title) !== normalizeName(author.author)) continue;
+      if (!title || normalizeName(title) !== normalizeName(name)) return null;
       const response = await axios.get(
         `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
         { headers: { 'User-Agent': 'ArticleExtractor/1.0' }, timeout: 15000 }
       );
       const summary = response.data.extract;
       const profileUrl = response.data.content_urls?.desktop?.page;
-      if (!summary && !profileUrl) continue;
-      await query(
-        config,
-        `UPDATE search_authors
-         SET biography = COALESCE(NULLIF(biography, ''), $2),
-             profile_url = COALESCE(NULLIF(profile_url, ''), $3),
-             metadata = metadata || $4::jsonb
-         WHERE id = $1`,
-        [author.id, summary || null, profileUrl || null, JSON.stringify({ wikipedia: response.data })]
-      );
+      if (!summary && !profileUrl) return null;
+      return { title, summary, profileUrl };
     } catch (err) {
-      console.warn(`Unable to enrich author ${author.author}:`, err.message);
+      if (err.response?.status === 429 && attempt < 3) {
+        console.warn(`Wikipedia rate limited for "${name}"; retrying in ${attempt * 10} seconds...`);
+        await delay(attempt * 10000);
+        continue;
+      }
+      throw err;
     }
   }
 }
@@ -75,10 +137,17 @@ async function finishPage(config, url, status, matched, statusCode, error) {
   );
 }
 
+function targetSearchTerms(target) {
+  return [
+    ...target.names.map(name => `"${name}"`),
+    ...target.keywords
+  ];
+}
+
 async function searchGdelt(target) {
-  const keywords = target.keywords.join(' ');
+  const query = targetSearchTerms(target).join(' ');
   const params = {
-    query: `${keywords} domain:${target.site}`,
+    query: `${query} domain:${target.site}`,
     mode: 'artlist',
     format: 'json',
     maxrecords: 10,
@@ -107,8 +176,7 @@ async function searchDuckDuckGo(target) {
   const cheerio = require('cheerio');
   const urls = [];
   const site = target.site.replace(/^www\./i, '');
-  const keywordQuery = target.keywords.join(' ');
-  const searchTerms = [`"${keywordQuery}"`, keywordQuery];
+  const searchTerms = targetSearchTerms(target);
 
   for (const terms of searchTerms) {
     const response = await axios.get('https://html.duckduckgo.com/html/', {
@@ -136,13 +204,17 @@ async function searchDuckDuckGo(target) {
   return [...new Set(urls)];
 }
 
-async function searchAuthors(authors, keywords) {
+async function searchAuthors(authors, names, keywords) {
   const cheerio = require('cheerio');
   const urls = [];
-  const searchTerms = keywords.length > 0 ? keywords : [''];
+  const searchTerms = [
+    ...names.map(name => `"${name}"`),
+    ...keywords
+  ].filter(Boolean);
+  const fallback = searchTerms.length > 0 ? searchTerms : [''];
 
   for (const author of authors) {
-    for (const keyword of searchTerms) {
+    for (const keyword of fallback) {
       const queryText = [`"${author}"`, keyword].filter(Boolean).join(' ');
       const response = await axios.get('https://html.duckduckgo.com/html/', {
         params: { q: queryText },
@@ -168,11 +240,15 @@ async function searchAuthors(authors, keywords) {
   return [...new Set(urls)];
 }
 
-async function searchAuthorsGdelt(authors, keywords) {
+async function searchAuthorsGdelt(authors, names, keywords) {
   const urls = [];
-  const queries = keywords.length > 0 ? keywords : [''];
+  const queries = [
+    ...names.map(name => `"${name}"`),
+    ...keywords
+  ].filter(Boolean);
+  const fallback = queries.length > 0 ? queries : [''];
   for (const author of authors) {
-    for (const keyword of queries) {
+    for (const keyword of fallback) {
       for (let attempt = 1; attempt <= 2; attempt += 1) {
         try {
           const response = await axios.get('https://api.gdeltproject.org/api/v2/doc/doc', {
@@ -276,7 +352,7 @@ async function searchHomepage(config, target) {
   const uniqueCandidates = [...new Set(candidates)].slice(0, 200);
   const inspectedUrls = await getInspectedUrls(config, target.site);
   const pendingCandidates = uniqueCandidates.filter(url => !inspectedUrls.has(url));
-  console.log(`Inspecting ${pendingCandidates.length} new homepage link(s) for ${target.site}; skipped ${uniqueCandidates.length - pendingCandidates.length}`);
+  console.log(`[discovery] ${target.site}: found ${uniqueCandidates.length} link(s), ${pendingCandidates.length} new to inspect`);
 
   for (const url of pendingCandidates) {
     if (!await claimPage(config, target.site, url)) continue;
@@ -287,8 +363,9 @@ async function searchHomepage(config, target) {
         maxContentLength: 5 * 1024 * 1024
       });
       await finishPage(config, url, 'completed', true, page.status);
+      console.log(`  [discovery] inspected (${page.status}) ${url}`);
     } catch (err) {
-      console.warn(`Unable to inspect ${url}:`, err.message);
+      console.warn(`  [discovery] failed (${err.response?.status || 'ERR'}) ${url}:`, err.message);
       await finishPage(config, url, 'failed', false, err.response?.status, err.message);
     }
     await delay(250);
@@ -310,25 +387,27 @@ async function discoverUrls(config) {
     throw new Error('Google provider selected but GOOGLE_API_KEY or GOOGLE_CX is empty.');
   }
 
-  const [targetResult, keywords, authors] = await Promise.all([
+  const [targetResult, searchTerms, authors] = await Promise.all([
     query(config, 'SELECT id, site FROM search_targets ORDER BY site'),
-    getGlobalKeywords(config),
+    getTopicSearchTerms(config),
     getGlobalAuthors(config)
   ]);
-  const targets = targetResult.rows.map(target => ({ ...target, keywords }));
+  const { names, keywords } = searchTerms;
+  const targets = targetResult.rows.map(target => ({ ...target, names, keywords }));
   await enrichAuthorProfiles(config, authors);
   const authorNames = authors.flatMap(author => [author.author, ...(author.variations || [])]).filter(Boolean);
   console.log(`Found ${targets.length} search target(s)`);
+  console.log(`Topic search terms: ${names.length} exact name(s), ${keywords.length} partial keyword(s)`);
   if (targets.length === 0) {
     console.warn('No search targets configured. Add sites to search_targets first.');
   }
 
   if (authorNames.length > 0) {
     try {
-      let authorUrls = await searchAuthors(authorNames, keywords);
+      let authorUrls = await searchAuthors(authorNames, names, keywords);
       if (authorUrls.length === 0) {
         console.warn('DuckDuckGo returned no author results; trying GDELT.');
-        authorUrls = await searchAuthorsGdelt(authorNames, keywords);
+        authorUrls = await searchAuthorsGdelt(authorNames, names, keywords);
       }
       for (const url of authorUrls) {
         const site = getSiteFromUrl(url);
@@ -347,7 +426,9 @@ async function discoverUrls(config) {
 
   if (targets.length === 0) return;
 
+  let totalDiscovered = 0;
   for (const target of targets) {
+    console.log(`\n[discovery] Target ${target.id} | site: ${target.site} | provider: ${provider}`);
     try {
       let urls = [];
       if (provider === 'gdelt') urls = await searchGdelt(target);
@@ -357,7 +438,7 @@ async function discoverUrls(config) {
       else if (provider === 'tavily') {
         const response = await axios.post('https://api.tavily.com/search', {
           api_key: config.TAVILY_API_KEY,
-          query: target.keywords.join(' '),
+          query: targetSearchTerms(target).join(' '),
           search_depth: 'advanced',
           max_results: 10,
           include_domains: [target.site]
@@ -365,26 +446,30 @@ async function discoverUrls(config) {
         urls = response.data.results.map(result => result.url);
       } else if (provider === 'google') {
         const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
-          params: { key: config.GOOGLE_API_KEY, cx: config.GOOGLE_CX, q: `${target.keywords.join(' ')} site:${target.site}` }
+          params: { key: config.GOOGLE_API_KEY, cx: config.GOOGLE_CX, q: `${targetSearchTerms(target).join(' ')} site:${target.site}` }
         });
         urls = response.data.items?.map(item => item.link) || [];
       }
 
+      let inserted = 0;
       for (const url of urls) {
-        await query(
+        const result = await query(
           config,
           `INSERT INTO articles (id, url, site) VALUES (gen_random_uuid(), $1, $2) ON CONFLICT (url) DO NOTHING`,
           [url, target.site]
         );
+        if (result.rowCount > 0) inserted += 1;
       }
-      console.log(`Discovered ${urls.length} URLs for ${target.site}`);
+      totalDiscovered += inserted;
+      console.log(`[discovery] ${target.site} -> ${inserted} new URL(s) queued (${urls.length} total candidate(s))`);
       if (['gdelt', 'duckduckgo', 'sitemap', 'homepage'].includes(provider)) await delay(5000);
     } catch (err) {
       const status = err.response?.status;
       const suffix = status === 429 ? ` ${provider} is rate-limiting requests; wait before retrying.` : '';
-      console.error(`Discovery error for target ${target.id}:`, `${err.message}.${suffix}`);
+      console.error(`[discovery] Error for target ${target.id} (${target.site}):`, `${err.message}.${suffix}`);
     }
   }
+  console.log(`\n[discovery] Pipeline complete: ${targets.length} target(s) processed, ${totalDiscovered} new URL(s) queued in total`);
 }
 
 module.exports = { discoverUrls };
