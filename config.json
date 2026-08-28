@@ -2,9 +2,9 @@
   "postgres": {
     "host": "postgres.intra.jbdesign.com.br",
     "port": 5432,
-    "user": "websearch",
+    "user": "luxen_user",
     "password": "0ab3c56d229f1040b30a",
-    "database": "websearch"
+    "database": "luxen"
   },
   "qdrant": {
     "url": "https://qdrant.intra.jbdesign.com.br:443",
